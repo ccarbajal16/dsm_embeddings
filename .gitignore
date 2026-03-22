@@ -1,0 +1,3 @@
+# Large raster files (exceed GitHub 100MB limit)
+data/embedding_pca.tif
+data/embedding_raster_2024.tif
