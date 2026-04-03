@@ -1,10 +1,10 @@
 # DSM with Satellite Embeddings
 
-Digital Soil Mapping (DSM) of 10 soil properties using Google's 64-band satellite embedding dataset (`GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL`) as covariates, reduced via PCA and modelled with Random Forest.
+Digital Soil Mapping (DSM) of 10 soil properties using Google's 64-band satellite embedding dataset (`GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL`) as covariates, reduced via PCA, modelled with Random Forest, and delineated into management zones via fuzzy c-means and spatially constrained clustering.
 
 ## Overview
 
-This workflow downloads a pre-computed satellite embedding raster from Google Earth Engine, extracts the embedding values at soil profile locations, reduces the 64 bands to a compact set of principal components, and fits cross-validated Random Forest models to predict soil properties across the landscape.
+This workflow downloads a pre-computed satellite embedding raster from Google Earth Engine, extracts the embedding values at soil profile locations, reduces the 64 bands to a compact set of principal components, fits cross-validated Random Forest models to predict soil properties across the landscape, and delineates management zones using the embedding PCs for precision agriculture applications.
 
 **Study area:** Trujillo region, Peru (UTM Zone 17S, EPSG:32717)
 **Target year:** 2024
@@ -13,8 +13,8 @@ This workflow downloads a pre-computed satellite embedding raster from Google Ea
 ## Workflow
 
 ```
-01_download_raster.js   →   02_R_extract_and_pca.R   →   03_R_spatial_prediction.R
-      (GEE)                          (R)                           (R)
+01_download_raster.js   →   02_R_extract_and_pca.R   →   03_R_spatial_prediction.R   →   04_R_management_zones.R
+      (GEE)                          (R)                           (R)                               (R)
 ```
 
 ### Script 01 — Download embedding raster (Google Earth Engine)
@@ -61,6 +61,41 @@ Loads the `GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL` image collection, filters to th
 | Min node size | 5 |
 | CV folds × repeats | 5 × 3 |
 
+---
+
+### Script 04 — Management Zone Delineation (R)
+
+Uses the embedding PCs from Script 02 to delineate precision-agriculture management zones across the landscape.
+
+1. **Zone number selection** — evaluates k = 2–10 using elbow (WSS) and average silhouette width via mini-batch k-means (`ClusterR`); auto-selects the silhouette peak or accepts a user-supplied `k_final`
+2. **Fuzzy c-means (FCM)** — fits FCM (via `ppclust`) on a 30 000-pixel subsample, assigns full-grid memberships analytically, and writes three rasters: hard zones, uncertainty (1 − max membership), and per-zone membership gradients
+3. **Spatially constrained clustering (ClustGeo)** — builds attribute (`D0`) and geographic (`D1`) distance matrices with `parallelDist`, sweeps `alpha` to balance attribute homogeneity vs spatial compactness, and performs Ward hierarchical clustering on the blend
+4. **Zone profiling** — extracts measured soil properties at profile locations per zone, computes summary statistics, and produces box plots and a radar chart
+5. **Fertility prescriptions** — classifies each zone for SOC, pH, and CEC against agronomic thresholds and assigns a variable-rate application priority (HIGH / MEDIUM / LOW)
+
+**Key configuration (`CFG`):**
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `n_pcs_cluster` | 10 | Number of PCs used for clustering |
+| `k_min` / `k_max` | 2 / 10 | Search range for optimal k |
+| `k_final` | `NULL` | Override auto-selection if needed |
+| `fuzziness` | 2.0 | FCM fuzziness exponent (m) |
+| `sample_size_fcm` | 30 000 | Pixels used to fit FCM |
+| `alpha_grid` | 0–1 by 0.1 | ClustGeo mixing parameter sweep |
+
+**Outputs:**
+
+| File | Description |
+|------|-------------|
+| `data/zones_fuzzy.tif` | Hard management zone raster |
+| `data/zones_uncertainty.tif` | Assignment uncertainty raster |
+| `data/zones_membership.tif` | Per-zone fuzzy membership stack |
+| `data/zones_clustgeo.tif` | Spatially constrained zone raster |
+| `outputs/zone_profiles.csv` | Mean / SD / median per zone × soil property |
+| `outputs/fertility_prescriptions.csv` | Fertility status and VR priority per zone |
+
+---
+
 ## Predicted Soil Properties
 
 | Variable | Description |
@@ -83,6 +118,7 @@ dsm_embeddings/
 ├── 01_download_raster.js          # GEE script — export embedding raster
 ├── 02_R_extract_and_pca.R         # R — extract values, PCA, UMAP
 ├── 03_R_spatial_prediction.R      # R — RF modelling, spatial prediction
+├── 04_R_management_zones.R        # R — management zone delineation & prescriptions
 │
 ├── data/
 │   ├── agro_geo.gpkg              # Study area boundary (GeoPackage)
@@ -94,11 +130,17 @@ dsm_embeddings/
 │   ├── embedding_pca.tif          # PCA raster (n_pcs bands) [gitignored]
 │   ├── embedding_raster_2024.tif  # Raw 64-band embedding raster [gitignored]
 │   ├── pca_workspace.RData        # PCA objects for Script 03
-│   └── rf_workspace.RData         # RF models and results
+│   ├── rf_workspace.RData         # RF models and results
+│   ├── zones_fuzzy.tif            # Hard management zone raster
+│   ├── zones_uncertainty.tif      # FCM assignment uncertainty raster
+│   ├── zones_membership.tif       # Per-zone fuzzy membership stack
+│   └── zones_clustgeo.tif         # Spatially constrained zone raster
 │
 ├── outputs/
 │   ├── rf_cv_results.csv          # Cross-validated RMSE, MAE, R² per property
-│   └── rf_importance.csv          # Variable importance per property × PC
+│   ├── rf_importance.csv          # Variable importance per property × PC
+│   ├── zone_profiles.csv          # Mean / SD / median per zone × soil property
+│   └── fertility_prescriptions.csv # Fertility status and VR priority per zone
 │
 └── figures/
     ├── 01_scree_plot.png           # PCA variance explained
@@ -108,26 +150,41 @@ dsm_embeddings/
     ├── 05_pca_raster_maps.png      # Spatial maps of first 4 PCs
     ├── 06_rf_obs_pred.png          # Observed vs predicted (CV) per property
     ├── 07_rf_importance.png        # RF variable importance heatmap
-    └── 08_soil_prediction_maps.png # Final soil prediction maps
+    ├── 08_soil_prediction_maps.png # Final soil prediction maps
+    ├── 11_zone_selection.png       # Elbow and silhouette curves
+    ├── 12_zone_maps.png            # FCM zone map + uncertainty
+    ├── 13_membership_maps.png      # Per-zone fuzzy membership gradients
+    ├── 14_clustgeo_alpha.png       # ClustGeo alpha selection
+    ├── 15_zones_comparison.png     # FCM vs ClustGeo comparison
+    ├── 16_zone_boxplots.png        # Soil properties by zone (box plots)
+    ├── 17_zone_radar.png           # Zone profile radar chart
+    ├── 18_prescription_summary.png # Fertility status by zone
+    └── 19_final_figure.png         # Combined zone map + box plot + alpha plot
 ```
 
 ## R Dependencies
 
-Scripts 02 and 03 auto-install any missing packages on first run.
+All scripts auto-install any missing packages on first run.
 
-| Package | Purpose |
-|---------|---------|
-| `terra` | Raster and vector operations |
-| `sf` | Vector geometry and CRS handling |
-| `tidyverse` | Data wrangling and ggplot2 |
-| `factoextra` | PCA visualisation helpers |
-| `umap` | UMAP non-linear dimensionality reduction |
-| `ranger` | Fast Random Forest (cross-validation) |
-| `randomForest` | RF for spatial prediction (serialisation-safe) |
-| `caret` | Cross-validation helpers |
-| `viridis` | Colour palettes |
-| `patchwork` | Multi-panel plot composition |
-| `tidyterra` | ggplot2 + terra integration |
+| Package | Used in | Purpose |
+|---------|---------|---------|
+| `terra` | 02–04 | Raster and vector operations |
+| `sf` | 02–04 | Vector geometry and CRS handling |
+| `tidyverse` | 02–04 | Data wrangling and ggplot2 |
+| `factoextra` | 02, 04 | PCA / cluster visualisation helpers |
+| `umap` | 02 | UMAP non-linear dimensionality reduction |
+| `ranger` | 03 | Fast Random Forest (cross-validation) |
+| `randomForest` | 03 | RF for spatial prediction (serialisation-safe) |
+| `caret` | 03 | Cross-validation helpers |
+| `viridis` | 02–04 | Colour palettes |
+| `patchwork` | 02–04 | Multi-panel plot composition |
+| `tidyterra` | 02–04 | ggplot2 + terra integration |
+| `ppclust` | 04 | Fuzzy c-means clustering |
+| `cluster` | 04 | Silhouette index |
+| `ClustGeo` | 04 | Spatially constrained hierarchical clustering |
+| `ClusterR` | 04 | Mini-batch k-means (C++ backend) |
+| `matrixStats` | 04 | Fast row-wise operations |
+| `parallelDist` | 04 | Multi-threaded distance matrices (C++) |
 
 ## Outputs
 
@@ -139,11 +196,15 @@ Scripts 02 and 03 auto-install any missing packages on first run.
 | ![Biplots](figures/02_biplots.png) | PC space coloured by BD, CEC, Fragm, Sand |
 | ![PCA maps](figures/05_pca_raster_maps.png) | Spatial structure of first 4 PCs |
 | ![Predictions](figures/08_soil_prediction_maps.png) | Predicted maps for all 10 soil properties |
+| ![Management zones](figures/19_final_figure.png) | Management zones, soil box plot, and ClustGeo alpha selection |
 
 ### Key files
 
 - `data/soil_predictions.tif` — 10-band GeoTIFF with one layer per soil property
 - `outputs/rf_cv_results.csv` — RMSE, MAE, R² for each property from repeated CV
+- `data/zones_fuzzy.tif` — Hard management zone raster (FCM)
+- `outputs/zone_profiles.csv` — Soil property statistics per zone
+- `outputs/fertility_prescriptions.csv` — Variable-rate application priorities per zone
 
 ## Quick Start
 
@@ -158,6 +219,12 @@ Scripts 02 and 03 auto-install any missing packages on first run.
    ```r
    source("03_R_spatial_prediction.R")
    ```
+
+4. **Run Script 04** in R:
+   ```r
+   source("04_R_management_zones.R")
+   ```
+   > Inspect `figures/11_zone_selection.png` to validate the chosen `k`. Override `CFG$k_final` if needed and re-run. Similarly, check `figures/14_clustgeo_alpha.png` to adjust the ClustGeo `alpha` parameter.
 
 > All paths are relative to the project root. Set your working directory to the repo root before running R scripts.
 
