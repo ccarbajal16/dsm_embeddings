@@ -1,0 +1,3 @@
+sfi_class,n,SFI_mean,SFI_sd,SFI_median,fertility_rank,fertility_label
+Low,33,0.31878374377983903,0.0694150513199664,0.29160158768736,1,Highest fertility
+Very Low,66,0.15087411433030803,0.051597896567154855,0.14267024357206554,2,Lowest fertility
