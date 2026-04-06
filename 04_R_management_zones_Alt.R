@@ -1,46 +1,5 @@
 # =============================================================================
 # Script 04_Alt: Management Zone Delineation — Pathway B: Soil Fertility Index
-# Module 6 — Soil Fertility Assessment via AHP-Weighted Fuzzy Membership
-#
-# PATHWAY B — Soil Fertility Index (AHP-weighted fuzzy membership)
-#     Each soil indicator is scored through a shape-appropriate fuzzy
-#     membership function (S-curve for "more-is-better" nutrients; bell
-#     for optima-constrained pH). Indicators are weighted by AHP
-#     (or equal weights as fallback). SFI ∈ [0,1] is interpolated and
-#     classified into fertility zones using standard breaks.
-#
-# Full pipeline:
-#   +  S/bell membership functions for soil indicators
-#   +  AHP-weighted Soil Fertility Index computation
-#   +  Kriging of SFI surface (automap) with prediction uncertainty
-#   +  SFI classification into fertility zones (Very Low → Very High)
-#   +  Zone profiling by SFI class
-#   +  Spatial validation: Moran's I, Kruskal-Wallis + Dunn tests
-#   +  Fertility prescriptions per SFI class
-#   +  Complete diagnostic CSV + PNG output set (figures 20–28)
-#
-# Inputs  (from Scripts 02 & 03):
-#   data/embedding_pca.tif              — used as spatial template for kriging grid
-#   data/soilgrids_with_embeddings.csv  — soil profiles + measured properties
-#
-# Outputs:
-#   data/zones_sfi.tif                 — SFI surface
-#   data/zones_sfi_class.tif           — SFI fertility class raster
-#   data/sfi_kriging_variance.tif      — kriging prediction variance
-#   outputs/zone_profiles.csv          — mean ± SD per SFI class per property
-#   outputs/sfi_zone_table.csv         — SFI stats by class
-#   outputs/fertility_prescriptions.csv
-#   outputs/kruskal_dunn_tests.csv     — inter-class significance
-#   outputs/moranI_results.csv         — Moran's I per soil property
-#   figures/20_sfi_map.png
-#   figures/21_sfi_class_map.png
-#   figures/22_sfi_kriging_variance.png
-#   figures/23_sfi_violin.png
-#   figures/24_zone_boxplots.png
-#   figures/25_zone_radar.png
-#   figures/26_moran_correlogram.png
-#   figures/27_prescription_summary.png
-#   figures/28_final_figure.png
 # =============================================================================
 
 # ── 0. PACKAGES ───────────────────────────────────────────────────────────────
