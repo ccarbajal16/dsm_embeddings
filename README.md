@@ -13,8 +13,9 @@ This workflow downloads a pre-computed satellite embedding raster from Google Ea
 ## Workflow
 
 ```
-01_download_raster.js   →   02_R_extract_and_pca.R   →   03_R_spatial_prediction.R   →   04_R_management_zones.R
-      (GEE)                          (R)                           (R)                               (R)
+01_download_raster.js   →   02_R_extract_and_pca.R   →   03_R_spatial_prediction.R   →   04_R_management_zones.R      (Pathway A: FCM + ClustGeo)
+      (GEE)                          (R)                           (R)                    ↘
+                                                                                            04_R_management_zones_Alt.R  (Pathway B: Soil Fertility Index)
 ```
 
 ### Script 01 — Download embedding raster (Google Earth Engine)
@@ -96,6 +97,44 @@ Uses the embedding PCs from Script 02 to delineate precision-agriculture managem
 
 ---
 
+### Script 04_Alt — Management Zone Delineation: Pathway B — Soil Fertility Index (R)
+
+An alternative to Script 04 that delineates zones using an AHP-weighted fuzzy Soil Fertility Index (SFI) rather than unsupervised clustering. Both scripts share the same inputs.
+
+1. **Soil Fertility Index (SFI)** — scores each soil profile for five key indicators (SOC, N, CEC, pH, BD) using indicator-specific fuzzy membership functions, then combines them with AHP-derived weights into a single 0–1 index
+   - *more-is-better* indicators (SOC, N, CEC): S-shaped membership function
+   - *less-is-better* indicators (BD): reversed S-shaped function
+   - *optimum-range* indicators (pH): bell-shaped function
+2. **Kriging of the SFI surface** — ordinary kriging via `automap` (automatic variogram fitting) interpolates the point-scale SFI across the raster domain; IDW is used as a fallback
+3. **SFI classification** — the continuous surface is reclassified into five fertility classes: Very Low / Low / Moderate / High / Very High
+4. **Zone profiling** — soil property statistics per SFI class (mean, SD, median); box plots and a normalised radar chart
+5. **Spatial validation** — Kruskal-Wallis + Dunn post-hoc tests (Bonferroni-corrected) and Moran's I spatial autocorrelation per soil property
+6. **Fertility prescriptions** — SOC, pH, and CEC are assessed against agronomic thresholds; a variable-rate application priority (HIGH / MEDIUM / LOW) is assigned to each SFI class
+
+**Key configuration (`CFG`):**
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `sfi_vars` | SOC, N, CEC, pH, BD | Indicators and their fuzzy membership parameters |
+| `sfi_ahp_weights` | SOC=0.35, N=0.28, CEC=0.18, pH=0.12, BD=0.07 | AHP-derived indicator weights |
+| `sfi_breaks` | 0, 0.25, 0.50, 0.75, 0.90, 1.0 | SFI class boundaries |
+| `sfi_labels` | Very Low … Very High | SFI class labels |
+| `thresh` | SOC: 10/20, pH: 5.8/7.2, CEC: 10/25 | Agronomic thresholds for prescriptions |
+
+**Outputs:**
+
+| File | Description |
+|------|-------------|
+| `data/zones_sfi.tif` | Continuous SFI kriged surface raster [0–1] |
+| `data/zones_sfi_class.tif` | SFI fertility class raster (5 classes) |
+| `data/sfi_kriging_variance.tif` | Kriging prediction variance raster |
+| `outputs/sfi_zone_table.csv` | SFI summary statistics per fertility class |
+| `outputs/zone_profiles.csv` | Mean / SD / median per SFI class × soil property |
+| `outputs/fertility_prescriptions.csv` | Fertility status and VR priority per SFI class |
+| `outputs/kruskal_dunn_tests.csv` | Kruskal-Wallis χ² and Dunn pairwise results |
+| `outputs/moranI_results.csv` | Moran's I statistic and p-value per soil property |
+
+---
+
 ## Predicted Soil Properties
 
 | Variable | Description |
@@ -118,7 +157,8 @@ dsm_embeddings/
 ├── 01_download_raster.js          # GEE script — export embedding raster
 ├── 02_R_extract_and_pca.R         # R — extract values, PCA, UMAP
 ├── 03_R_spatial_prediction.R      # R — RF modelling, spatial prediction
-├── 04_R_management_zones.R        # R — management zone delineation & prescriptions
+├── 04_R_management_zones.R        # R — management zone delineation & prescriptions (Pathway A: FCM + ClustGeo)
+├── 04_R_management_zones_Alt.R    # R — management zone delineation via Soil Fertility Index (Pathway B)
 │
 ├── data/
 │   ├── agro_geo.gpkg              # Study area boundary (GeoPackage)
@@ -134,13 +174,19 @@ dsm_embeddings/
 │   ├── zones_fuzzy.tif            # Hard management zone raster
 │   ├── zones_uncertainty.tif      # FCM assignment uncertainty raster
 │   ├── zones_membership.tif       # Per-zone fuzzy membership stack
-│   └── zones_clustgeo.tif         # Spatially constrained zone raster
+│   ├── zones_clustgeo.tif         # Spatially constrained zone raster
+│   ├── zones_sfi.tif              # Continuous SFI kriged surface [0–1]
+│   ├── zones_sfi_class.tif        # SFI fertility class raster (5 classes)
+│   └── sfi_kriging_variance.tif   # SFI kriging prediction variance
 │
 ├── outputs/
 │   ├── rf_cv_results.csv          # Cross-validated RMSE, MAE, R² per property
 │   ├── rf_importance.csv          # Variable importance per property × PC
 │   ├── zone_profiles.csv          # Mean / SD / median per zone × soil property
-│   └── fertility_prescriptions.csv # Fertility status and VR priority per zone
+│   ├── fertility_prescriptions.csv # Fertility status and VR priority per zone
+│   ├── sfi_zone_table.csv         # SFI summary statistics per fertility class
+│   ├── kruskal_dunn_tests.csv     # Kruskal-Wallis + Dunn post-hoc test results
+│   └── moranI_results.csv         # Moran's I per soil property
 │
 └── figures/
     ├── 01_scree_plot.png           # PCA variance explained
@@ -159,7 +205,16 @@ dsm_embeddings/
     ├── 16_zone_boxplots.png        # Soil properties by zone (box plots)
     ├── 17_zone_radar.png           # Zone profile radar chart
     ├── 18_prescription_summary.png # Fertility status by zone
-    └── 19_final_figure.png         # Combined zone map + box plot + alpha plot
+    ├── 19_final_figure.png         # Combined zone map + box plot + alpha plot
+    ├── 20_sfi_map.png              # SFI continuous kriged surface + observed points
+    ├── 21_sfi_class_map.png        # SFI fertility classification raster
+    ├── 22_sfi_kriging_variance.png # Kriging prediction variance
+    ├── 23_sfi_violin.png           # SFI distribution by fertility class
+    ├── 24_zone_boxplots.png        # Soil properties by SFI fertility class
+    ├── 25_zone_radar.png           # Zone profile radar chart (normalised)
+    ├── 26_moran_correlogram.png    # Moran's I bar chart + Moran scatter plots
+    ├── 27_prescription_summary.png # Soil fertility status by SFI class
+    └── 28_final_figure.png         # Combined SFI kriged | variance | SFI classes
 ```
 
 ## R Dependencies
@@ -185,6 +240,9 @@ All scripts auto-install any missing packages on first run.
 | `ClusterR` | 04 | Mini-batch k-means (C++ backend) |
 | `matrixStats` | 04 | Fast row-wise operations |
 | `parallelDist` | 04 | Multi-threaded distance matrices (C++) |
+| `spdep` | 04_Alt | Spatial weights, Moran's I, spatial autocorrelation |
+| `automap` | 04_Alt | Automatic variogram fitting and ordinary kriging |
+| `dunn.test` | 04_Alt | Dunn post-hoc test after Kruskal-Wallis |
 
 ## Outputs
 
@@ -196,15 +254,23 @@ All scripts auto-install any missing packages on first run.
 | ![Biplots](figures/02_biplots.png) | PC space coloured by BD, CEC, Fragm, Sand |
 | ![PCA maps](figures/05_pca_raster_maps.png) | Spatial structure of first 4 PCs |
 | ![Predictions](figures/08_soil_prediction_maps.png) | Predicted maps for all 10 soil properties |
-| ![Management zones](figures/19_final_figure.png) | Management zones, soil box plot, and ClustGeo alpha selection |
+| ![Management zones](figures/19_final_figure.png) | Management zones, soil box plot, and ClustGeo alpha selection (Pathway A) |
+| ![SFI map](figures/20_sfi_map.png) | Kriged Soil Fertility Index surface with observed profile locations |
+| ![SFI classes](figures/21_sfi_class_map.png) | SFI fertility classification raster (Very Low → Very High) |
+| ![Moran's I](figures/26_moran_correlogram.png) | Moran's I bar chart and Moran scatter plots per soil property |
+| ![SFI final](figures/28_final_figure.png) | Combined SFI kriged surface, kriging variance, and fertility classes (Pathway B) |
 
 ### Key files
 
 - `data/soil_predictions.tif` — 10-band GeoTIFF with one layer per soil property
 - `outputs/rf_cv_results.csv` — RMSE, MAE, R² for each property from repeated CV
-- `data/zones_fuzzy.tif` — Hard management zone raster (FCM)
+- `data/zones_fuzzy.tif` — Hard management zone raster (FCM, Pathway A)
 - `outputs/zone_profiles.csv` — Soil property statistics per zone
 - `outputs/fertility_prescriptions.csv` — Variable-rate application priorities per zone
+- `data/zones_sfi.tif` — Continuous SFI kriged surface (Pathway B)
+- `data/zones_sfi_class.tif` — SFI fertility class raster (5 classes)
+- `outputs/kruskal_dunn_tests.csv` — Kruskal-Wallis + Dunn test results per soil property
+- `outputs/moranI_results.csv` — Moran's I spatial autocorrelation per soil property
 
 ## Quick Start
 
@@ -220,11 +286,17 @@ All scripts auto-install any missing packages on first run.
    source("03_R_spatial_prediction.R")
    ```
 
-4. **Run Script 04** in R:
+4. **Run Script 04 (Pathway A — FCM + ClustGeo)** in R:
    ```r
    source("04_R_management_zones.R")
    ```
    > Inspect `figures/11_zone_selection.png` to validate the chosen `k`. Override `CFG$k_final` if needed and re-run. Similarly, check `figures/14_clustgeo_alpha.png` to adjust the ClustGeo `alpha` parameter.
+
+5. **Run Script 04_Alt (Pathway B — Soil Fertility Index)** in R:
+   ```r
+   source("04_R_management_zones_Alt.R")
+   ```
+   > Review `figures/20_sfi_map.png` and `figures/22_sfi_kriging_variance.png` to assess kriging quality. Adjust `CFG$sfi_ahp_weights` or `CFG$sfi_vars` membership parameters to reflect local agronomic knowledge. Scripts 04 and 04_Alt are independent and can be run in any order after Script 02.
 
 > All paths are relative to the project root. Set your working directory to the repo root before running R scripts.
 
